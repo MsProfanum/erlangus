@@ -10,7 +10,7 @@
 -author("kasia").
 
 %% API
--export([createMonitor/0, getStationKeyName/2, getNameKeyCoords/2, addStation/3, addValue/5, removeValue/4, getOneValue/3, getStationMean/2, getDailyMean/2]).
+-export([createMonitor/0, getStationKeyName/2, getNameKeyCoords/2, addStation/3, addValue/5, getOneValue/4, getDailyMean/2, removeValue/5, getName/1, getDate/1, getType/1, getData/1, getValue/1, getStationMean/2]).
 
 -record(monitor, {
   names, %mapa przechowująca nazwę stacji jako klucze, wartością oddawaną jest cała stacja
@@ -55,28 +55,28 @@ addStation(Name, Localization, Mon) ->
     true -> erlang:throw("Station is already in the map")
   end.
 
+addValue({X,Y}, Date, Type, Value, Mon) ->
+  case maps:is_key({X,Y}, Mon#monitor.stationCoords) of
+    false -> erlang:throw("Station with this coordinates does not exist");
+    true -> addValueStation(getStationKeyName(getNameKeyCoords({X,Y},Mon),Mon), #data{datetime = Date, type = Type, value = Value}, Mon)
+  end;
+
 addValue(Name, Date, Type, Value, Mon) ->
   case maps:is_key(Name, Mon#monitor.names) of
     false -> erlang:throw("Station with this name does not exist");
     true -> addValueStation(getStationKeyName(Name, Mon),#data{datetime = Date,type = Type, value = Value}, Mon)
-  end;
-
-addValue(Location, Date, Type, Value, Mon) ->
-  case maps:is_key(Location, Mon#monitor.stationCoords) of
-    false -> erlang:throw("Station with this coordinates does not exist");
-    true -> addValueStation(getStationKeyName(getNameKeyCoords(Location,Mon),Mon), #data{datetime = Date, type = Type, value = Value}, Mon)
   end.
 
 addValueStation(Station, Ms, Mon) ->
   Station2 = Station#station{data = [Ms | Station#station.data]},
-  Mon#monitor{names = maps:put(Station#station.name, Station2, Mon#monitor.names)}.
+  Mon#monitor{names = maps:update(Station#station.name, Station2, Mon#monitor.names)}.
 
-removeValue(Name, Date, Val, Mon) -> removeValueStation(getStationKeyName(Name, Mon), #data{datetime = Date, value = Val}, Mon);
-removeValue(Loc, Date, Val, Mon) -> removeValueStation(getStationKeyName(getNameKeyCoords(Loc, Mon),Mon),#data{datetime = Date, value = Val}, Mon).
+removeValue(Name, Date, Type, Val, Mon) -> removeValueStation(getStationKeyName(Name, Mon), #data{datetime = Date, type = Type, value = Val}, Mon);
+removeValue({X,Y}, Date, Type, Val, Mon) -> removeValueStation(getStationKeyName(getNameKeyCoords({X,Y}, Mon),Mon),#data{datetime = Date,type = Type, value = Val}, Mon).
 
 removeValueStation(Station, Ms, Mon) ->
-  Station2 = Station#station{data = newList(Station#station.data,Ms)},
-  Mon#monitor{names = maps:put(Station#station.name, Station2, Mon#monitor.names)}.
+  Station2 = #station{name = Station#station.name, localization = Station#station.localization, data = newList(Station#station.data, Ms)},
+  Mon#monitor{names = maps:update(Station#station.name, Station2, Mon#monitor.names)}.
 
 newList([],_) -> erlang:throw("There was nothing to remove");
 newList(List, MsRemove) ->
@@ -85,12 +85,40 @@ newList(List, MsRemove) ->
     _ -> lists:delete(MsRemove,List)
   end.
 
+getOneValue(Name, Type, Date, Station) -> %zwraca pustą listę :(
+  Data = Station#station.data,
+  DataList = [Ms || Ms <- Data, getDate(Ms) =:= Date, getType(Ms) =:= Type],
+  case (Station#station.name =:= Name) and DataList =/= [] of
+    false -> erlang:throw("There is no station like this");
+    true -> [getValue(X) || X <- DataList]
+  end;
+getOneValue({X,Y}, Type, Date, Station) ->
+  Data = Station#station.data,
+  DataList = [Ms || Ms <- Data, Data#data.datetime =:= Date, Data#data.type =:= Type],
+  case (Station#station.localization =:= {X,Y}) and (DataList =/= []) of
+    false -> erlang:throw("There is no station like this");
+    true -> [getValue(X) || X <- DataList]
+  end.
+getName(Station) -> Station#station.name.
+getDate(Data) -> Data#data.datetime.
+getData(Station) -> Station#station.data.
+getType(Data) -> Data#data.type.
+getValue(Data) -> Data#data.value.
 
-getOneValue(name, date, type) ->
-  erlang:error(not_implemented).
 
-getStationMean(name, type) ->
-  erlang:error(not_implemented).
 
-getDailyMean(date, type) ->
-  erlang:error(not_implemented).
+getStationMean(Type, Station) ->
+  Data = Station#station.data,
+  DataList = [Ms || Ms <- Data, getType(Ms) =:= Type],
+  case DataList of
+    [] -> erlang:throw("Station does not have any values of this type");
+    _ -> L = [getValue(X) || X <- DataList],
+      lists:sum(L)/length(L)
+  end.
+
+getDailyMean(Type, Mon) ->
+  Names = maps:keys(Mon#monitor.names),
+  Stations = lists:map(fun(X) -> getStationKeyName(X,Mon) end, Names),
+  Data = lists:map(fun(X) -> getData(X) end, Stations),
+  Values = [getValue(M) || M <- Data, M#data.type =:= Type],
+  lists:sum(Values).
